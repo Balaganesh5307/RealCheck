@@ -9,6 +9,8 @@ function Result() {
     }
 
     const isReal = data.result === 'Real'
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+    const getFullUrl = (path) => path?.startsWith('http') ? path : `${apiUrl}${path}`
 
     return (
         <div className="result-page">
@@ -19,7 +21,7 @@ function Result() {
                     <div className="image-card">
                         <div className="image-card-inner">
                             <img
-                                src={data.imageUrl}
+                                src={getFullUrl(data.imageUrl)}
                                 alt="Original"
                                 className="result-image"
                             />

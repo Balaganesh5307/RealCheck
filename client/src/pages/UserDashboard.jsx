@@ -22,6 +22,9 @@ function UserDashboard() {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     })
 
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+    const getFullUrl = (path) => path?.startsWith('http') ? path : `${apiUrl}${path}`
+
     api.interceptors.response.use(r => r, err => {
         if (err.response?.status === 401) { localStorage.clear(); navigate('/login') }
         return Promise.reject(err)
@@ -205,7 +208,7 @@ function UserDashboard() {
                                 <div className="result-view">
                                     <div className="result-images">
                                         <div className="result-img-card">
-                                            <img src={detailResult.imageUrl} alt="Original" />
+                                            <img src={getFullUrl(detailResult.imageUrl)} alt="Original" />
                                             <span>Original</span>
                                         </div>
                                         {detailResult.heatmapImage && (
@@ -250,7 +253,7 @@ function UserDashboard() {
                                                     <tr key={r._id}>
                                                         <td>
                                                             <img
-                                                                src={r.imagePath}
+                                                                src={getFullUrl(r.imagePath)}
                                                                 alt=""
                                                                 className="tbl-thumb tbl-thumb-click"
                                                                 onClick={() => viewDetail(r._id)}

@@ -23,6 +23,9 @@ function AdminDashboard() {
         headers: { Authorization: `Bearer ${localStorage.getItem('adminToken')}` }
     })
 
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+    const getFullUrl = (path) => path?.startsWith('http') ? path : `${apiUrl}${path}`
+
     api.interceptors.response.use(r => r, err => {
         if (err.response?.status === 401 || err.response?.status === 403) {
             localStorage.removeItem('adminToken')
@@ -233,7 +236,7 @@ function AdminDashboard() {
                                     <tbody>
                                         {history.map(r => (
                                             <tr key={r._id}>
-                                                <td><img src={r.imagePath} alt="" className="tbl-thumb" /></td>
+                                                <td><img src={getFullUrl(r.imagePath)} alt="" className="tbl-thumb" /></td>
                                                 <td className="muted">{getUserName(r)}</td>
                                                 <td><span className={`badge ${r.prediction === 'Real' ? 'badge-green' : 'badge-red'}`}>{r.prediction}</span></td>
                                                 <td><span className="conf-val">{r.confidence}%</span></td>

@@ -254,6 +254,11 @@ def analyze_image(image_bytes):
         reasons_real.append('Natural saturation variation observed')
 
     # ===== FINAL SCORING =====
+    # Apply bias correction: Typical phone/web crops often trigger AI flags falsely.
+    # Lower AI points by 60% and boost Real points by 50% to balance out the rigid thresholds.
+    ai_points = ai_points * 0.4
+    real_points = real_points * 1.5
+    
     total = real_points + ai_points
     if total < 0.5:
         return 'Real', 62.0, ['Image analysis inconclusive, defaulting to real']

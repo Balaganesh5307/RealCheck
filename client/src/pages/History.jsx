@@ -12,6 +12,9 @@ function History() {
     const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'))
     const navigate = useNavigate()
 
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+    const getFullUrl = (path) => path?.startsWith('http') ? path : `${apiUrl}${path}`
+
     useEffect(() => {
         if (isLoggedIn) fetchHistory()
         else setLoading(false)
@@ -68,7 +71,7 @@ function History() {
                     confidence: item.confidence,
                     explanation: item.explanation || [],
                     heatmapImage: item.heatmapImage || '',
-                    imageUrl: item.imagePath,
+                    imageUrl: getFullUrl(item.imagePath),
                     createdAt: item.createdAt
                 }
             }
@@ -142,7 +145,7 @@ function History() {
                                             <td>
                                                 <div className="thumb-wrapper thumb-clickable" onClick={() => viewResult(item)} title="View result details">
                                                     <img
-                                                        src={item.imagePath}
+                                                        src={getFullUrl(item.imagePath)}
                                                         alt="Thumbnail"
                                                         className="table-thumb"
                                                     />
