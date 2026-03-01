@@ -69,7 +69,7 @@ router.post('/', upload.single('image'), async (req, res) => {
 
             const mlResponse = await axios.post(process.env.ML_API_URL, formData, {
                 headers: formData.getHeaders(),
-                timeout: 30000
+                timeout: 120000 // Extended to 120s to allow Render free tier to wake up from cold start
             });
             mlResult = mlResponse.data;
         } catch (mlError) {
