@@ -33,6 +33,12 @@ def generate_gradcam(image_bytes):
     """
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        
+        # DOWNSIZE large images to prevent Gunicorn timeout and RAM OOM on Render Free Tier
+        max_size = 800
+        if img.width > max_size or img.height > max_size:
+            img.thumbnail((max_size, max_size), Image.LANCZOS)
+            
         original_np = np.array(img)
 
         input_tensor = gradcam_transform(img).unsqueeze(0)
