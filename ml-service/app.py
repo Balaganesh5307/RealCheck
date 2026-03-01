@@ -28,8 +28,9 @@ gradcam_transform = transforms.Compose([
 
 def generate_gradcam(image_bytes):
     """
-    Generate Grad-CAM heatmap using MobileNetV2 (PyTorch).
+    Generate an Activation Map using MobileNetV2 (PyTorch) forward pass only.
     Returns base64-encoded JPEG of the heatmap overlay on the original image.
+    This avoids .backward() which consumes too much memory on Render Free Tier.
     """
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
@@ -43,37 +44,13 @@ def generate_gradcam(image_bytes):
 
         input_tensor = gradcam_transform(img).unsqueeze(0)
 
-        activations = []
-        gradients = []
-
-        def forward_hook(module, input, output):
-            activations.append(output.detach())
-
-        def backward_hook(module, grad_input, grad_output):
-            gradients.append(grad_output[0].detach())
-
-        target_layer = mobilenet_model.features[-1]
-        fwd_handle = target_layer.register_forward_hook(forward_hook)
-        bwd_handle = target_layer.register_full_backward_hook(backward_hook)
-
-        output = mobilenet_model(input_tensor)
-        top_class = output.argmax(dim=1).item()
-
-        mobilenet_model.zero_grad()
-        class_score = output[0, top_class]
-        class_score.backward()
-
-        fwd_handle.remove()
-        bwd_handle.remove()
-
-        grads_val = gradients[0][0]
-        acts_val = activations[0][0]
-
-        weights = torch.mean(grads_val, dim=(1, 2))
-        heatmap = torch.zeros(acts_val.shape[1:], dtype=acts_val.dtype)
-        for i, w in enumerate(weights):
-            heatmap += w * acts_val[i]
-
+        with torch.no_grad():
+            features = mobilenet_model.features(input_tensor)
+        
+        # Features shape for MobileNetV2: [1, 1280, 7, 7]
+        acts = features[0]
+        heatmap = torch.mean(acts, dim=0)
+        
         heatmap = torch.relu(heatmap)
         heatmap = heatmap / (heatmap.max() + 1e-10)
         heatmap = heatmap.numpy()
@@ -93,7 +70,7 @@ def generate_gradcam(image_bytes):
         return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
     except Exception as e:
-        print(f'Grad-CAM error: {e}')
+        print(f'Activation Map error: {e}')
         import traceback
         traceback.print_exc()
         return None
