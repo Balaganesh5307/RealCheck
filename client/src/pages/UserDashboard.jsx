@@ -17,8 +17,10 @@ function UserDashboard() {
     const fileRef = useRef(null)
     const navigate = useNavigate()
     const userName = localStorage.getItem('userName') || 'User'
-
-    const api = axios.create({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+    const api = axios.create({
+        baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+    })
 
     api.interceptors.response.use(r => r, err => {
         if (err.response?.status === 401) { localStorage.clear(); navigate('/login') }
