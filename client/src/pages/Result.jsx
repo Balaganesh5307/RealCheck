@@ -15,15 +15,33 @@ function Result() {
             <div className="result-container">
                 <h1 className="page-title">Analysis Result</h1>
 
-                <div className="result-card">
-                    <div className="result-image-wrapper">
-                        <img
-                            src={data.imageUrl}
-                            alt="Analyzed"
-                            className="result-image"
-                        />
+                <div className="result-images-grid">
+                    <div className="image-card">
+                        <div className="image-card-inner">
+                            <img
+                                src={data.imageUrl}
+                                alt="Original"
+                                className="result-image"
+                            />
+                        </div>
+                        <div className="image-card-label">🖼️ Original Image</div>
                     </div>
 
+                    {data.heatmapImage && (
+                        <div className="image-card">
+                            <div className="image-card-inner">
+                                <img
+                                    src={`data:image/jpeg;base64,${data.heatmapImage}`}
+                                    alt="Grad-CAM Heatmap"
+                                    className="result-image heatmap-image"
+                                />
+                            </div>
+                            <div className="image-card-label">🧠 Model Attention Heatmap</div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="result-card">
                     <div className="result-details">
                         <div className={`result-badge ${isReal ? 'badge-real' : 'badge-ai'}`}>
                             <span className="badge-icon">{isReal ? '✅' : '⚠️'}</span>
@@ -56,17 +74,31 @@ function Result() {
                     </div>
                 </div>
 
-                {data.explanation && data.explanation.length > 0 && (
+                {data.explanation && (
                     <div className={`explanation-card ${isReal ? 'explanation-real' : 'explanation-ai'}`}>
-                        <h3 className="explanation-title">🔍 Why This Result?</h3>
-                        <ul className="explanation-list">
-                            {data.explanation.map((reason, index) => (
-                                <li key={index} className="explanation-item">
-                                    <span className={`explanation-dot ${isReal ? 'dot-real' : 'dot-ai'}`}></span>
-                                    {reason}
-                                </li>
-                            ))}
-                        </ul>
+                        <div className="explanation-header">
+                            <span className="explanation-badge">AI Explanation</span>
+                        </div>
+                        <p className="explanation-paragraph">
+                            {(() => {
+                                const text = Array.isArray(data.explanation) ? data.explanation.join('. ') : data.explanation
+                                const keywords = [
+                                    'frequency spectrum', 'frequency domain', 'camera sensor', 'depth-of-field',
+                                    'micro-texture', 'color channels', 'RGB color', 'noise patterns',
+                                    'high confidence', 'moderate confidence', 'limited confidence',
+                                    'synthetically generated', 'authentic photograph', 'AI-generated',
+                                    'edge transitions', 'saturation', 'brightness', 'neural network',
+                                    'optical lens', 'forensic', 'spectral distribution'
+                                ]
+                                const regex = new RegExp(`(${keywords.join('|')})`, 'gi')
+                                const parts = text.split(regex)
+                                return parts.map((part, i) =>
+                                    keywords.some(k => k.toLowerCase() === part.toLowerCase())
+                                        ? <strong key={i} className="explanation-keyword">{part}</strong>
+                                        : part
+                                )
+                            })()}
+                        </p>
                     </div>
                 )}
 

@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import LoginModal from '../components/LoginModal'
 
 function Upload() {
     const [selectedFile, setSelectedFile] = useState(null)
@@ -8,6 +9,8 @@ function Upload() {
     const [loading, setLoading] = useState(false)
     const [dragActive, setDragActive] = useState(false)
     const [error, setError] = useState('')
+    const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'))
+    const [showLogin, setShowLogin] = useState(!localStorage.getItem('token'))
     const fileInputRef = useRef(null)
     const navigate = useNavigate()
 
@@ -59,9 +62,10 @@ function Upload() {
         try {
             const formData = new FormData()
             formData.append('image', selectedFile)
-            const response = await axios.post('/api/upload', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            })
+            const token = localStorage.getItem('token')
+            const headers = { 'Content-Type': 'multipart/form-data' }
+            if (token) headers.Authorization = `Bearer ${token}`
+            const response = await axios.post('/api/upload', formData, { headers })
             navigate('/result', { state: { result: response.data } })
         } catch (err) {
             setError(err.response?.data?.error || 'Failed to analyze image. Please try again.')
@@ -77,7 +81,7 @@ function Upload() {
         if (fileInputRef.current) fileInputRef.current.value = ''
     }
 
-    return (
+    const content = (
         <div className="upload-page">
             <div className="upload-container">
                 <h1 className="page-title">Upload Image</h1>
@@ -141,6 +145,18 @@ function Upload() {
                 )}
             </div>
         </div>
+    )
+
+    return (
+        <>
+            {!isLoggedIn && showLogin && (
+                <LoginModal
+                    onSuccess={() => { setIsLoggedIn(true); setShowLogin(false) }}
+                    onClose={() => navigate('/')}
+                />
+            )}
+            {content}
+        </>
     )
 }
 

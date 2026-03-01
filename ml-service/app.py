@@ -1,12 +1,96 @@
 import os
 import numpy as np
+import base64
+import cv2
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageFilter, ImageStat
 import io
 
+import torch
+import torchvision.models as models
+import torchvision.transforms as transforms
+
 app = Flask(__name__)
 CORS(app)
+
+print('Loading MobileNetV2 model...')
+mobilenet_model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
+mobilenet_model.eval()
+print('MobileNetV2 model loaded successfully')
+
+gradcam_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+
+def generate_gradcam(image_bytes):
+    """
+    Generate Grad-CAM heatmap using MobileNetV2 (PyTorch).
+    Returns base64-encoded JPEG of the heatmap overlay on the original image.
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        original_np = np.array(img)
+
+        input_tensor = gradcam_transform(img).unsqueeze(0)
+
+        activations = []
+        gradients = []
+
+        def forward_hook(module, input, output):
+            activations.append(output.detach())
+
+        def backward_hook(module, grad_input, grad_output):
+            gradients.append(grad_output[0].detach())
+
+        target_layer = mobilenet_model.features[-1]
+        fwd_handle = target_layer.register_forward_hook(forward_hook)
+        bwd_handle = target_layer.register_full_backward_hook(backward_hook)
+
+        output = mobilenet_model(input_tensor)
+        top_class = output.argmax(dim=1).item()
+
+        mobilenet_model.zero_grad()
+        class_score = output[0, top_class]
+        class_score.backward()
+
+        fwd_handle.remove()
+        bwd_handle.remove()
+
+        grads_val = gradients[0][0]
+        acts_val = activations[0][0]
+
+        weights = torch.mean(grads_val, dim=(1, 2))
+        heatmap = torch.zeros(acts_val.shape[1:], dtype=acts_val.dtype)
+        for i, w in enumerate(weights):
+            heatmap += w * acts_val[i]
+
+        heatmap = torch.relu(heatmap)
+        heatmap = heatmap / (heatmap.max() + 1e-10)
+        heatmap = heatmap.numpy()
+
+        heatmap_resized = cv2.resize(heatmap, (original_np.shape[1], original_np.shape[0]))
+        heatmap_uint8 = np.uint8(255 * heatmap_resized)
+        heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+        heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+
+        overlay = np.uint8(original_np * 0.6 + heatmap_colored * 0.4)
+
+        overlay_img = Image.fromarray(overlay)
+        buffer = io.BytesIO()
+        overlay_img.save(buffer, format='JPEG', quality=85)
+        buffer.seek(0)
+
+        return base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+    except Exception as e:
+        print(f'Grad-CAM error: {e}')
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def analyze_image(image_bytes):
@@ -30,8 +114,6 @@ def analyze_image(image_bytes):
     reasons_ai = []
 
     # ===== 1. FREQUENCY DOMAIN ANALYSIS (FFT) =====
-    # AI-generated images have distinct frequency domain signatures
-    # They often lack natural high-frequency noise and have spectral artifacts
     f_transform = np.fft.fft2(gray)
     f_shift = np.fft.fftshift(f_transform)
     magnitude = np.log1p(np.abs(f_shift))
@@ -39,9 +121,7 @@ def analyze_image(image_bytes):
     h, w = magnitude.shape
     cy, cx = h // 2, w // 2
 
-    # High-frequency energy ratio
     total_energy = np.sum(magnitude)
-    # Outer ring (high freq)
     Y, X = np.ogrid[:h, :w]
     outer_mask = ((X - cx)**2 + (Y - cy)**2) > (min(h, w) // 3)**2
     mid_mask = (((X - cx)**2 + (Y - cy)**2) > (min(h, w) // 6)**2) & \
@@ -51,7 +131,6 @@ def analyze_image(image_bytes):
     high_freq_ratio = np.sum(magnitude[outer_mask]) / total_energy if total_energy > 0 else 0
     mid_freq_ratio = np.sum(magnitude[mid_mask]) / total_energy if total_energy > 0 else 0
 
-    # AI images tend to have less high-frequency energy and more mid-frequency uniformity
     if high_freq_ratio < 0.25:
         ai_points += 1.5
         reasons_ai.append('Abnormal frequency spectrum pattern detected')
@@ -59,7 +138,6 @@ def analyze_image(image_bytes):
         real_points += 1.0
         reasons_real.append('Natural high-frequency noise spectrum identified')
 
-    # Check mid-frequency uniformity (AI images are more uniform)
     mid_freq_values = magnitude[mid_mask]
     mid_freq_cv = np.std(mid_freq_values) / (np.mean(mid_freq_values) + 1e-10)
     if mid_freq_cv < 0.35:
@@ -67,8 +145,6 @@ def analyze_image(image_bytes):
         reasons_ai.append('Uniform mid-frequency energy distribution (synthetic signature)')
 
     # ===== 2. BRIGHTNESS-DEPENDENT NOISE =====
-    # Real cameras: darker regions have MORE noise (shot noise + read noise)
-    # AI images: noise is uniform regardless of brightness
     dark_mask = gray < 80
     bright_mask = gray > 180
     mid_mask_brightness = (gray >= 80) & (gray <= 180)
@@ -96,8 +172,6 @@ def analyze_image(image_bytes):
             ai_points += 0.3
 
     # ===== 3. MICRO-TEXTURE SMOOTHNESS =====
-    # AI images have unnaturally smooth gradients at micro level
-    # Check 8x8 block-level smoothness
     block_smoothness = []
     for i in range(0, 240, 8):
         for j in range(0, 240, 8):
@@ -120,11 +194,8 @@ def analyze_image(image_bytes):
             reasons_real.append('Natural micro-texture variations present')
 
     # ===== 4. SHARPNESS UNIFORMITY =====
-    # Real photos: varying sharpness due to depth of field
-    # AI images: uniformly sharp or artificially blurred
     edges = np.array(img_small.filter(ImageFilter.FIND_EDGES).convert('L'), dtype=np.float64)
 
-    # Divide into quadrants and compare sharpness
     h4, w4 = edges.shape[0] // 2, edges.shape[1] // 2
     quadrant_sharpness = [
         np.mean(edges[:h4, :w4]),
@@ -142,7 +213,6 @@ def analyze_image(image_bytes):
         reasons_real.append('Natural depth of field variation detected')
 
     # ===== 5. COLOR CHANNEL CORRELATION =====
-    # AI images tend to have higher correlation between color channels
     r, g, b = arr[:,:,0].flatten(), arr[:,:,1].flatten(), arr[:,:,2].flatten()
     rg_corr = np.corrcoef(r, g)[0, 1]
     rb_corr = np.corrcoef(r, b)[0, 1]
@@ -157,7 +227,6 @@ def analyze_image(image_bytes):
         reasons_real.append('Natural color channel independence detected')
 
     # ===== 6. EDGE GRADIENT ANALYSIS =====
-    # AI images often have overly clean edges with sharp transitions
     edge_gradients = np.abs(np.diff(edges.flatten()))
     edge_gradient_mean = np.mean(edge_gradients)
     edge_gradient_std = np.std(edge_gradients)
@@ -206,6 +275,116 @@ def analyze_image(image_bytes):
         return 'Real', round(confidence, 2), explanation
 
 
+def generate_explanation(prediction, confidence, reasons):
+    """
+    Generate a dynamic, intelligent explanation paragraph based on
+    prediction result, confidence level, and detected patterns.
+    """
+    import random
+
+    if prediction == 'AI Generated':
+        # --- AI Generated explanations ---
+        if confidence >= 90:
+            confidence_phrase = 'with high confidence'
+            opener = random.choice([
+                'The analysis strongly indicates this image is synthetically generated.',
+                'Our deep analysis reveals strong evidence of artificial image generation.',
+                'Multiple forensic indicators point to this image being AI-generated.'
+            ])
+        elif confidence >= 75:
+            confidence_phrase = 'with moderate confidence'
+            opener = random.choice([
+                'The analysis suggests this image exhibits characteristics of synthetic generation.',
+                'Several forensic markers indicate this image may be artificially generated.',
+                'Our analysis detected notable signs of AI-based image synthesis.'
+            ])
+        else:
+            confidence_phrase = 'with limited confidence'
+            opener = random.choice([
+                'The analysis found some indicators that this image may be synthetically generated.',
+                'Certain characteristics suggest possible AI involvement in creating this image.',
+                'A few forensic markers hint at synthetic generation, though evidence is limited.'
+            ])
+
+        finding_templates = {
+            'Abnormal frequency spectrum pattern detected':
+                'The frequency domain analysis revealed an abnormal spectral distribution, lacking the natural noise patterns typically produced by camera sensors.',
+            'Uniform mid-frequency energy distribution (synthetic signature)':
+                'The mid-frequency energy distribution appears unusually uniform, a common signature of neural network-based image synthesis.',
+            'Unnatural uniform noise across brightness levels':
+                'The noise characteristics remain suspiciously consistent across different brightness regions, whereas real camera sensors produce varying noise levels in dark versus bright areas.',
+            'Detected unnaturally smooth texture regions':
+                'Micro-texture analysis identified unnaturally smooth regions that lack the organic grain and variation found in photographs captured by physical cameras.',
+            'Unnaturally uniform sharpness across image (no natural depth of field)':
+                'The sharpness appears uniformly distributed across the entire image, missing the natural depth-of-field variation that optical lenses produce.',
+            'Abnormally high color channel correlation':
+                'The RGB color channels exhibit abnormally high correlation, suggesting the pixel values were generated from a shared latent representation rather than independent sensor measurements.',
+            'Overly sharp edge transitions detected':
+                'Edge analysis revealed overly crisp transitions between objects, lacking the subtle gradient blending that occurs naturally in optical image capture.',
+            'Abnormally uniform color saturation levels':
+                'Color saturation levels are unusually consistent throughout the image, a pattern more typical of generative algorithms than natural scene illumination.'
+        }
+
+    else:
+        # --- Real image explanations ---
+        if confidence >= 90:
+            confidence_phrase = 'with high confidence'
+            opener = random.choice([
+                'The analysis strongly indicates this is an authentic photograph.',
+                'Multiple forensic checks confirm this image exhibits genuine photographic characteristics.',
+                'Our deep analysis identifies strong markers of authentic camera capture.'
+            ])
+        elif confidence >= 75:
+            confidence_phrase = 'with moderate confidence'
+            opener = random.choice([
+                'The analysis suggests this image is a genuine photograph.',
+                'Forensic markers are consistent with an authentic camera-captured image.',
+                'Our analysis detected characteristics typical of real-world photography.'
+            ])
+        else:
+            confidence_phrase = 'with limited confidence'
+            opener = random.choice([
+                'The analysis found some indicators consistent with authentic photography.',
+                'Certain characteristics suggest this image was likely captured by a real camera.',
+                'Some forensic markers are consistent with genuine photographic capture.'
+            ])
+
+        finding_templates = {
+            'Natural high-frequency noise spectrum identified':
+                'The frequency spectrum exhibits natural high-frequency noise patterns consistent with real-world image capture and camera sensor behavior.',
+            'Camera sensor noise pattern verified (brightness-dependent)':
+                'The noise distribution varies naturally with brightness levels — darker regions show more noise, which is a hallmark of authentic camera sensor physics.',
+            'Natural micro-texture variations present':
+                'Micro-texture analysis confirmed natural variations and organic grain at the pixel level, consistent with real photographic images.',
+            'Natural depth of field variation detected':
+                'The image displays natural depth-of-field variation, with some regions sharper than others, indicating capture through an actual optical lens system.',
+            'Natural color channel independence detected':
+                'The RGB color channels show natural independence in their value distributions, consistent with separate sensor measurements from a real camera.',
+            'Natural gradient transitions at edges':
+                'Edge transitions display natural, gradual gradients rather than artificially crisp boundaries, consistent with optical image formation.',
+            'Natural saturation variation observed':
+                'Color saturation varies organically across the image, reflecting natural lighting conditions and scene properties.',
+            'Image analysis inconclusive, defaulting to real':
+                'The image does not exhibit strong synthetic markers, and the default assessment leans toward authentic capture.'
+        }
+
+    # Build the findings paragraph
+    findings = []
+    for reason in reasons[:3]:
+        if reason in finding_templates:
+            findings.append(finding_templates[reason])
+        else:
+            findings.append(reason + '.')
+
+    findings_text = ' '.join(findings) if findings else ''
+
+    # Compose final paragraph
+    confidence_summary = f'The detection confidence is {confidence}% ({confidence_phrase}).'
+    explanation = f'{opener} {findings_text} {confidence_summary}'
+
+    return explanation.strip()
+
+
 @app.route('/predict', methods=['POST'])
 def predict():
     if 'image' not in request.files:
@@ -218,12 +397,22 @@ def predict():
         return jsonify({'error': 'Empty image file'}), 400
 
     try:
-        prediction, confidence, explanation = analyze_image(image_bytes)
-        return jsonify({
+        prediction, confidence, reasons = analyze_image(image_bytes)
+
+        explanation = generate_explanation(prediction, confidence, reasons)
+
+        heatmap_image = generate_gradcam(image_bytes)
+
+        response = {
             'result': prediction,
             'confidence': confidence,
             'explanation': explanation
-        })
+        }
+
+        if heatmap_image:
+            response['heatmap_image'] = heatmap_image
+
+        return jsonify(response)
     except Exception as e:
         print(f'Prediction error: {e}')
         import traceback
@@ -240,6 +429,7 @@ def health():
 
 
 if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
     print('RealCheck ML Service starting...')
-    print('Using advanced image analysis heuristics for prediction')
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    print('Using advanced image analysis heuristics + Grad-CAM visualization')
+    app.run(host='0.0.0.0', port=port)

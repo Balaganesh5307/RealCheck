@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import LoginModal from '../components/LoginModal'
 
 function History() {
     const [results, setResults] = useState([])
@@ -8,11 +9,22 @@ function History() {
     const [error, setError] = useState('')
     const [deleteId, setDeleteId] = useState(null)
     const [showDeleteAll, setShowDeleteAll] = useState(false)
+    const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'))
     const navigate = useNavigate()
 
     useEffect(() => {
-        fetchHistory()
-    }, [])
+        if (isLoggedIn) fetchHistory()
+        else setLoading(false)
+    }, [isLoggedIn])
+
+    if (!isLoggedIn) {
+        return (
+            <LoginModal
+                onSuccess={() => setIsLoggedIn(true)}
+                onClose={() => navigate('/')}
+            />
+        )
+    }
 
     const fetchHistory = async () => {
         try {
@@ -55,6 +67,7 @@ function History() {
                     result: item.prediction,
                     confidence: item.confidence,
                     explanation: item.explanation || [],
+                    heatmapImage: item.heatmapImage || '',
                     imageUrl: item.imagePath,
                     createdAt: item.createdAt
                 }

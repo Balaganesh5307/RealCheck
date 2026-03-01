@@ -5,6 +5,7 @@ const path = require('path');
 const axios = require('axios');
 const fs = require('fs');
 const FormData = require('form-data');
+const jwt = require('jsonwebtoken');
 const Result = require('../models/Result');
 
 const storage = multer.diskStorage({
@@ -37,34 +38,21 @@ const upload = multer({
 });
 
 function generateExplanation(prediction, confidence) {
-    const aiReasons = [
-        'Detected unnatural texture patterns in the image',
-        'Identified abnormal lighting consistency across regions',
-        'Found synthetic facial symmetry indicators',
-        'High-frequency noise artifacts detected',
-        'Uniform color distribution suggesting digital generation',
-        'Detected repeating micro-patterns typical of GAN outputs',
-        'Inconsistent shadow directions identified',
-        'Overly smooth skin texture detected'
-    ];
-
-    const realReasons = [
-        'Natural lighting variations detected across the image',
-        'Realistic texture and depth patterns identified',
-        'Camera sensor noise signature identified',
-        'Organic background irregularities present',
-        'Natural color gradient transitions found',
-        'Authentic lens distortion patterns detected',
-        'Consistent shadow and light source alignment',
-        'Natural skin texture variations observed'
-    ];
-
-    const pool = prediction === 'AI Generated' ? aiReasons : realReasons;
-    const count = confidence > 85 ? 4 : confidence > 70 ? 3 : 2;
-
-    const shuffled = [...pool].sort(() => 0.5 - Math.random());
-    return shuffled.slice(0, count);
+    if (prediction === 'AI Generated') {
+        if (confidence >= 85) {
+            return 'The analysis strongly indicates this image is synthetically generated. Multiple forensic indicators, including abnormal frequency spectrum patterns and unnaturally smooth texture regions, point to AI-based image synthesis. The detection confidence is ' + confidence + '% (with high confidence).';
+        } else {
+            return 'The analysis detected some characteristics consistent with synthetic image generation. Certain texture patterns and frequency distributions suggest possible AI involvement. The detection confidence is ' + confidence + '% (with moderate confidence).';
+        }
+    } else {
+        if (confidence >= 85) {
+            return 'The analysis strongly indicates this is an authentic photograph. Natural lighting variations, organic texture patterns, and authentic camera noise characteristics were identified. The detection confidence is ' + confidence + '% (with high confidence).';
+        } else {
+            return 'The analysis suggests this image is a genuine photograph. Some forensic markers consistent with real camera capture were detected we. The detection confidence is ' + confidence + '% (with moderate confidence).';
+        }
+    }
 }
+
 
 router.post('/', upload.single('image'), async (req, res) => {
     try {
@@ -98,12 +86,25 @@ router.post('/', upload.single('image'), async (req, res) => {
         }
 
         const explanation = mlResult.explanation || generateExplanation(mlResult.result, mlResult.confidence);
+        const heatmapImage = mlResult.heatmap_image || '';
+
+        // Try to get userId from token (optional - works without login too)
+        let userId = null;
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            try {
+                const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+                userId = decoded.userId;
+            } catch (_) { }
+        }
 
         const result = new Result({
+            userId,
             imagePath,
             prediction: mlResult.result,
             confidence: mlResult.confidence,
-            explanation
+            explanation,
+            heatmapImage
         });
         await result.save();
 
@@ -112,6 +113,7 @@ router.post('/', upload.single('image'), async (req, res) => {
             result: mlResult.result,
             confidence: mlResult.confidence,
             explanation,
+            heatmapImage,
             imageUrl: imagePath,
             createdAt: result.createdAt
         });
