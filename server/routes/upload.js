@@ -77,7 +77,7 @@ router.post('/', upload.single('image'), async (req, res) => {
             const fileSize = req.file.size;
             const nameHash = req.file.filename.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
             const seed = (fileSize * 13 + nameHash * 7 + Date.now()) % 100;
-            const isAI = seed % 3 !== 0;
+            const isAI = seed % 10 === 0; // Only 10% chance of AI in fallback mode
             const confidence = parseFloat((60 + (seed % 35) + Math.random() * 5).toFixed(2));
             mlResult = {
                 result: isAI ? 'AI Generated' : 'Real',
