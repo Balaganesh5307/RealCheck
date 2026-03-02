@@ -29,9 +29,13 @@ function History() {
         )
     }
 
+    const getAuthHeader = () => ({
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+    })
+
     const fetchHistory = async () => {
         try {
-            const response = await axios.get('/api/history')
+            const response = await axios.get('/api/history', getAuthHeader())
             setResults(response.data)
         } catch (err) {
             setError('Failed to load history. Please try again.')
@@ -42,7 +46,7 @@ function History() {
 
     const handleDelete = async (id) => {
         try {
-            await axios.delete(`/api/history/${id}`)
+            await axios.delete(`/api/history/${id}`, getAuthHeader())
             setResults(results.filter((item) => item._id !== id))
             setDeleteId(null)
         } catch (err) {
@@ -53,7 +57,7 @@ function History() {
 
     const handleDeleteAll = async () => {
         try {
-            await axios.delete('/api/history')
+            await axios.delete('/api/history', getAuthHeader())
             setResults([])
             setShowDeleteAll(false)
         } catch (err) {
