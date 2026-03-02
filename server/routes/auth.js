@@ -22,17 +22,28 @@ router.post('/google', async (req, res) => {
         const payload = ticket.getPayload();
         const { sub: googleId, name, email, picture } = payload;
 
+        // Determine if this email is the designated admin
+        const isAdmin = email === process.env.ADMIN_USERNAME;
+
         // Find existing user or create one
         let user = await User.findOne({ $or: [{ googleId }, { email }] });
         if (!user) {
             // New user — create with a random placeholder password
             const randomPassword = Math.random().toString(36).slice(-12) + 'Aa1!';
-            user = new User({ name, email, googleId, password: randomPassword });
+            user = new User({
+                name,
+                email,
+                googleId,
+                password: randomPassword,
+                role: isAdmin ? 'admin' : 'user'
+            });
             await user.save();
-        } else if (!user.googleId) {
-            // Existing email user — link Google account
-            user.googleId = googleId;
-            await user.save();
+        } else {
+            // Update googleId if not linked yet, and enforce admin role if needed
+            let changed = false;
+            if (!user.googleId) { user.googleId = googleId; changed = true; }
+            if (isAdmin && user.role !== 'admin') { user.role = 'admin'; changed = true; }
+            if (changed) await user.save();
         }
 
         const token = jwt.sign(
@@ -50,6 +61,7 @@ router.post('/google', async (req, res) => {
         res.status(401).json({ error: 'Google authentication failed' });
     }
 });
+
 
 
 
