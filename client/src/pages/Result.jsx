@@ -29,18 +29,23 @@ function Result() {
                         <div className="image-card-label">🖼️ Original Image</div>
                     </div>
 
-                    {data.heatmapImage && (
-                        <div className="image-card">
-                            <div className="image-card-inner">
+                    <div className="image-card">
+                        <div className="image-card-inner">
+                            {data.heatmapImage ? (
                                 <img
                                     src={`data:image/jpeg;base64,${data.heatmapImage}`}
                                     alt="Grad-CAM Heatmap"
                                     className="result-image heatmap-image"
                                 />
-                            </div>
-                            <div className="image-card-label">🧠 Model Attention Heatmap</div>
+                            ) : (
+                                <div className="heatmap-placeholder">
+                                    <span className="heatmap-placeholder-icon">🧠</span>
+                                    <span className="heatmap-placeholder-text">Heatmap not available</span>
+                                </div>
+                            )}
                         </div>
-                    )}
+                        <div className="image-card-label">🧠 Model Attention Heatmap</div>
+                    </div>
                 </div>
 
                 <div className="result-card">
