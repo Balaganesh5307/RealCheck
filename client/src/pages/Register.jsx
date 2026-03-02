@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { GoogleLogin } from '@react-oauth/google'
 import axios from 'axios'
 
 function Register() {
@@ -16,15 +17,32 @@ function Register() {
         setLoading(true)
         try {
             const res = await axios.post('/api/auth/register', { name, email, password })
-            localStorage.setItem('token', res.data.token)
-            localStorage.setItem('userName', res.data.user.name)
-            localStorage.setItem('userEmail', res.data.user.email)
-            navigate('/')
+            saveAndRedirect(res.data)
         } catch (err) {
             setError(err.response?.data?.error || 'Registration failed')
         } finally {
             setLoading(false)
         }
+    }
+
+    const handleGoogleSuccess = async (credentialResponse) => {
+        setError('')
+        setLoading(true)
+        try {
+            const res = await axios.post('/api/auth/google', { credential: credentialResponse.credential })
+            saveAndRedirect(res.data)
+        } catch (err) {
+            setError(err.response?.data?.error || 'Google sign-up failed')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const saveAndRedirect = (data) => {
+        localStorage.setItem('token', data.token)
+        localStorage.setItem('userName', data.user.name)
+        localStorage.setItem('userEmail', data.user.email)
+        navigate('/')
     }
 
     return (
@@ -38,6 +56,24 @@ function Register() {
                         <p>Start detecting AI-generated images</p>
                     </div>
                     {error && <div className="auth-alert">{error}</div>}
+
+                    {/* Google Sign-Up */}
+                    <div className="google-btn-wrapper">
+                        <GoogleLogin
+                            onSuccess={handleGoogleSuccess}
+                            onError={() => setError('Google sign-up was cancelled or failed')}
+                            theme="outline"
+                            size="large"
+                            width="100%"
+                            text="continue_with"
+                            shape="rectangular"
+                        />
+                    </div>
+
+                    <div className="auth-divider">
+                        <span>or register with email</span>
+                    </div>
+
                     <form onSubmit={handleRegister}>
                         <div className="field">
                             <label>Full Name</label>

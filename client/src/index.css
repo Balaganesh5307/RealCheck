@@ -1277,6 +1277,35 @@ img {
   color: var(--primary);
 }
 
+/* Google OAuth button */
+.google-btn-wrapper {
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.google-btn-wrapper>div {
+  width: 100% !important;
+}
+
+/* "or sign in with email" divider */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 16px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 /* ============================
    Navbar Auth Links
    ============================ */

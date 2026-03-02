@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { GoogleLogin } from '@react-oauth/google'
 import axios from 'axios'
 
 function Login() {
@@ -15,20 +16,37 @@ function Login() {
         setLoading(true)
         try {
             const res = await axios.post('/api/auth/login', { email, password })
-            if (res.data.user.role === 'admin') {
-                localStorage.setItem('adminToken', res.data.token)
-                localStorage.setItem('adminName', res.data.user.name)
-                navigate('/admin/dashboard')
-            } else {
-                localStorage.setItem('token', res.data.token)
-                localStorage.setItem('userName', res.data.user.name)
-                localStorage.setItem('userEmail', res.data.user.email)
-                navigate('/')
-            }
+            saveAndRedirect(res.data)
         } catch (err) {
             setError(err.response?.data?.error || 'Login failed')
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handleGoogleSuccess = async (credentialResponse) => {
+        setError('')
+        setLoading(true)
+        try {
+            const res = await axios.post('/api/auth/google', { credential: credentialResponse.credential })
+            saveAndRedirect(res.data)
+        } catch (err) {
+            setError(err.response?.data?.error || 'Google sign-in failed')
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const saveAndRedirect = (data) => {
+        if (data.user.role === 'admin') {
+            localStorage.setItem('adminToken', data.token)
+            localStorage.setItem('adminName', data.user.name)
+            navigate('/admin/dashboard')
+        } else {
+            localStorage.setItem('token', data.token)
+            localStorage.setItem('userName', data.user.name)
+            localStorage.setItem('userEmail', data.user.email)
+            navigate('/')
         }
     }
 
@@ -43,6 +61,24 @@ function Login() {
                         <p>Sign in to your RealCheck account</p>
                     </div>
                     {error && <div className="auth-alert">{error}</div>}
+
+                    {/* Google Sign-In */}
+                    <div className="google-btn-wrapper">
+                        <GoogleLogin
+                            onSuccess={handleGoogleSuccess}
+                            onError={() => setError('Google sign-in was cancelled or failed')}
+                            theme="outline"
+                            size="large"
+                            width="100%"
+                            text="continue_with"
+                            shape="rectangular"
+                        />
+                    </div>
+
+                    <div className="auth-divider">
+                        <span>or sign in with email</span>
+                    </div>
+
                     <form onSubmit={handleLogin}>
                         <div className="field">
                             <label>Email</label>
