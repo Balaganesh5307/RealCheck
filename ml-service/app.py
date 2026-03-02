@@ -28,52 +28,73 @@ gradcam_transform = transforms.Compose([
 
 def generate_gradcam(image_bytes):
     """
-    Generate an Activation Map using MobileNetV2 (PyTorch) forward pass only.
-    Returns base64-encoded JPEG of the heatmap overlay on the original image.
-    This avoids .backward() which consumes too much memory on Render Free Tier.
+    Generate a heatmap overlay on the image.
+    Primary:  MobileNetV2 feature activation map (PyTorch).
+    Fallback: OpenCV Laplacian saliency heatmap (no heavy RAM needed).
+    Always returns a base64-encoded JPEG.
     """
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        
-        # DOWNSIZE large images to prevent Gunicorn timeout and RAM OOM on Render Free Tier
-        max_size = 800
+
+        # Downsize to limit RAM usage on Render Free Tier
+        max_size = 600
         if img.width > max_size or img.height > max_size:
             img.thumbnail((max_size, max_size), Image.LANCZOS)
-            
+
         original_np = np.array(img)
 
-        input_tensor = gradcam_transform(img).unsqueeze(0)
+        # --- Primary: PyTorch feature activation map ---
+        try:
+            input_tensor = gradcam_transform(img).unsqueeze(0)
 
-        with torch.no_grad():
-            features = mobilenet_model.features(input_tensor)
-        
-        # Features shape for MobileNetV2: [1, 1280, 7, 7]
-        acts = features[0]
-        heatmap = torch.mean(acts, dim=0)
-        
-        heatmap = torch.relu(heatmap)
-        heatmap = heatmap / (heatmap.max() + 1e-10)
-        heatmap = heatmap.numpy()
+            with torch.no_grad():
+                features = mobilenet_model.features(input_tensor)
 
-        heatmap_resized = cv2.resize(heatmap, (original_np.shape[1], original_np.shape[0]))
-        heatmap_uint8 = np.uint8(255 * heatmap_resized)
-        heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
-        heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+            acts = features[0]                          # [1280, 7, 7]
+            heatmap = torch.mean(acts, dim=0)           # [7, 7]
+            heatmap = torch.relu(heatmap)
+            heatmap = heatmap / (heatmap.max() + 1e-10)
+            heatmap_np = heatmap.numpy()
 
-        overlay = np.uint8(original_np * 0.6 + heatmap_colored * 0.4)
+            heatmap_resized = cv2.resize(heatmap_np, (original_np.shape[1], original_np.shape[0]))
+            heatmap_uint8 = np.uint8(255 * heatmap_resized)
+            heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+            heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+            overlay = np.uint8(original_np * 0.55 + heatmap_colored * 0.45)
+            print('Heatmap: PyTorch activation map OK')
+
+        except Exception as torch_err:
+            print(f'PyTorch heatmap failed, using OpenCV fallback: {torch_err}')
+
+            # --- Fallback: OpenCV Laplacian saliency heatmap ---
+            gray = cv2.cvtColor(original_np, cv2.COLOR_RGB2GRAY)
+            lap = cv2.Laplacian(gray, cv2.CV_64F)
+            salience = np.abs(lap).astype(np.float32)
+            salience = cv2.GaussianBlur(salience, (21, 21), 0)
+
+            mn, mx = salience.min(), salience.max()
+            if mx - mn > 0:
+                salience_norm = ((salience - mn) / (mx - mn) * 255).astype(np.uint8)
+            else:
+                salience_norm = np.zeros_like(gray, dtype=np.uint8)
+
+            heatmap_colored = cv2.applyColorMap(salience_norm, cv2.COLORMAP_JET)
+            heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+            overlay = np.uint8(original_np * 0.55 + heatmap_colored * 0.45)
+            print('Heatmap: OpenCV fallback OK')
 
         overlay_img = Image.fromarray(overlay)
         buffer = io.BytesIO()
         overlay_img.save(buffer, format='JPEG', quality=85)
         buffer.seek(0)
-
         return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
     except Exception as e:
-        print(f'Activation Map error: {e}')
+        print(f'Heatmap generation completely failed: {e}')
         import traceback
         traceback.print_exc()
         return None
+
 
 
 def analyze_image(image_bytes):
