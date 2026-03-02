@@ -60,7 +60,9 @@ router.post('/', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image file provided' });
         }
 
-        const imagePath = `/uploads/${req.file.filename}`;
+        // Build absolute URL so frontend can display images without knowing the backend host
+        const baseUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`;
+        const imagePath = `${baseUrl}/uploads/${req.file.filename}`;
 
         let mlResult;
         try {
