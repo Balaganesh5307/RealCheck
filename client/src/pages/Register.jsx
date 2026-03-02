@@ -64,7 +64,7 @@ function Register() {
                             onError={() => setError('Google sign-up was cancelled or failed')}
                             theme="outline"
                             size="large"
-                            width="100%"
+                            width={360}
                             text="continue_with"
                             shape="rectangular"
                         />
