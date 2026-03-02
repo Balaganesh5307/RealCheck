@@ -7,81 +7,56 @@ from flask_cors import CORS
 from PIL import Image, ImageFilter, ImageStat
 import io
 
-import torch
-import torchvision.models as models
-import torchvision.transforms as transforms
-
 app = Flask(__name__)
 CORS(app)
 
-print('Loading MobileNetV2 model...')
-mobilenet_model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
-mobilenet_model.eval()
-print('MobileNetV2 model loaded successfully')
 
-gradcam_transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
-
-
-def generate_gradcam(image_bytes):
+def generate_heatmap(image_bytes):
     """
-    Generate a heatmap overlay on the image.
-    Primary:  MobileNetV2 feature activation map (PyTorch).
-    Fallback: OpenCV Laplacian saliency heatmap (no heavy RAM needed).
+    Generate an OpenCV-based saliency heatmap overlay.
+    Uses multi-scale Laplacian + Canny edge blending for a rich, informative
+    activation-style visualization — no PyTorch/GPU needed.
     Always returns a base64-encoded JPEG.
     """
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
 
-        # Downsize to limit RAM usage on Render Free Tier
-        max_size = 600
+        # Downsize to cap RAM and speed up on Render Free Tier
+        max_size = 640
         if img.width > max_size or img.height > max_size:
             img.thumbnail((max_size, max_size), Image.LANCZOS)
 
         original_np = np.array(img)
+        gray = cv2.cvtColor(original_np, cv2.COLOR_RGB2GRAY)
 
-        # --- Primary: PyTorch feature activation map ---
-        try:
-            input_tensor = gradcam_transform(img).unsqueeze(0)
+        # --- Multi-scale Laplacian saliency ---
+        lap1 = cv2.Laplacian(gray, cv2.CV_64F, ksize=1)
+        lap3 = cv2.Laplacian(gray, cv2.CV_64F, ksize=3)
+        lap5 = cv2.Laplacian(gray, cv2.CV_64F, ksize=5)
+        salience = (np.abs(lap1) * 0.3 + np.abs(lap3) * 0.4 + np.abs(lap5) * 0.3).astype(np.float32)
 
-            with torch.no_grad():
-                features = mobilenet_model.features(input_tensor)
+        # --- Canny edge contribution ---
+        edges = cv2.Canny(gray, 50, 150).astype(np.float32)
 
-            acts = features[0]                          # [1280, 7, 7]
-            heatmap = torch.mean(acts, dim=0)           # [7, 7]
-            heatmap = torch.relu(heatmap)
-            heatmap = heatmap / (heatmap.max() + 1e-10)
-            heatmap_np = heatmap.numpy()
+        # Blend saliency + edges
+        salience_smooth = cv2.GaussianBlur(salience, (15, 15), 0)
+        edge_smooth = cv2.GaussianBlur(edges, (15, 15), 0)
 
-            heatmap_resized = cv2.resize(heatmap_np, (original_np.shape[1], original_np.shape[0]))
-            heatmap_uint8 = np.uint8(255 * heatmap_resized)
-            heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
-            heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
-            overlay = np.uint8(original_np * 0.55 + heatmap_colored * 0.45)
-            print('Heatmap: PyTorch activation map OK')
+        combined = cv2.addWeighted(salience_smooth, 0.7, edge_smooth, 0.3, 0)
 
-        except Exception as torch_err:
-            print(f'PyTorch heatmap failed, using OpenCV fallback: {torch_err}')
+        # Normalize to [0, 255]
+        mn, mx = combined.min(), combined.max()
+        if mx - mn > 0:
+            norm = ((combined - mn) / (mx - mn) * 255).astype(np.uint8)
+        else:
+            norm = np.zeros_like(gray, dtype=np.uint8)
 
-            # --- Fallback: OpenCV Laplacian saliency heatmap ---
-            gray = cv2.cvtColor(original_np, cv2.COLOR_RGB2GRAY)
-            lap = cv2.Laplacian(gray, cv2.CV_64F)
-            salience = np.abs(lap).astype(np.float32)
-            salience = cv2.GaussianBlur(salience, (21, 21), 0)
+        # Apply JET colormap
+        heatmap_colored = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+        heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
 
-            mn, mx = salience.min(), salience.max()
-            if mx - mn > 0:
-                salience_norm = ((salience - mn) / (mx - mn) * 255).astype(np.uint8)
-            else:
-                salience_norm = np.zeros_like(gray, dtype=np.uint8)
-
-            heatmap_colored = cv2.applyColorMap(salience_norm, cv2.COLORMAP_JET)
-            heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
-            overlay = np.uint8(original_np * 0.55 + heatmap_colored * 0.45)
-            print('Heatmap: OpenCV fallback OK')
+        # Blend with original image
+        overlay = cv2.addWeighted(original_np, 0.55, heatmap_colored, 0.45, 0)
 
         overlay_img = Image.fromarray(overlay)
         buffer = io.BytesIO()
@@ -90,11 +65,10 @@ def generate_gradcam(image_bytes):
         return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
     except Exception as e:
-        print(f'Heatmap generation completely failed: {e}')
+        print(f'Heatmap generation failed: {e}')
         import traceback
         traceback.print_exc()
         return None
-
 
 
 def analyze_image(image_bytes):
@@ -258,9 +232,6 @@ def analyze_image(image_bytes):
         reasons_real.append('Natural saturation variation observed')
 
     # ===== FINAL SCORING =====
-    # Apply mild bias correction: Typical phone/web crops often trigger slight AI flags falsely.
-    # We slightly lower AI points and boost Real points so it doesn't fail on compression artifacts,
-    # but still catches actual AI images.
     ai_points = ai_points * 0.85
     real_points = real_points * 1.1
     total = real_points + ai_points
@@ -407,10 +378,8 @@ def predict():
 
     try:
         prediction, confidence, reasons = analyze_image(image_bytes)
-
         explanation = generate_explanation(prediction, confidence, reasons)
-
-        heatmap_image = generate_gradcam(image_bytes)
+        heatmap_image = generate_heatmap(image_bytes)
 
         response = {
             'result': prediction,
@@ -440,5 +409,5 @@ def health():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     print('RealCheck ML Service starting...')
-    print('Using advanced image analysis heuristics + Grad-CAM visualization')
+    print('Using heuristic analysis + OpenCV saliency heatmap')
     app.run(host='0.0.0.0', port=port)
